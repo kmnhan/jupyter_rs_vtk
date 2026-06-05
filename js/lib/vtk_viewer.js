@@ -214,18 +214,17 @@ export class VTKView extends DOMWidgetView {
     selectedPoint = -1;
 
     // stash the actor and associated info to avoid recalculation
-    addActor(name, group, actor, type, pickable) {
+    addActor(name, group, actor, type, pickable, pData) {
         if (! this.fsRenderer) {
             // exception or message?
             //rsUtils.rslog('No renderer');
             //return;
             throw new Error('No renderer');
         }
-        if (! actor.getMapper() || ! actor.getMapper().getInputData()) {
+        pData = pData || (actor.getMapper() || {}).getInputData();
+        if (! actor.getMapper() || ! pData) {
             throw new Error('Actor ' + name + ' has no mapper or data');
         }
-
-        const pData = actor.getMapper().getInputData();
 
         const info = {
             actor: actor,
@@ -247,7 +246,7 @@ export class VTKView extends DOMWidgetView {
 
         // for now assume lines and polys are uniform in color -
         let s = this.model.get('actor_state');
-        if (! s[name]) {
+        if (! s[name] && info.scalars) {
             s[name] = {
                 color: info.scalars.getData().slice(0, 3),
                 alpha: info.scalars.getData().slice(3, 4)
@@ -350,9 +349,16 @@ export class VTKView extends DOMWidgetView {
 
         this.selectedObject = null;
         if (! this.fsRenderer) {
+            const container = $(this.el).find('.vtk-content')[0];
+            if (! container) {
+                window.setTimeout(function () {
+                    view.refresh();
+                }, 100);
+                return;
+            }
             try {
                 this.fsRenderer = vtkFullScreenRenderWindow.newInstance({
-                    container: $(this.el).find('.vtk-content')[0],
+                    container: container,
                 });
             }
             catch (error) {
@@ -545,7 +551,7 @@ export class VTKView extends DOMWidgetView {
             //this.cPicker.initializePickList();
         }
 
-        let sceneData = this.model.get('model_data');
+        let sceneData = this.model.get('model_data') || {};
         rsUtils.rslog('sceneData:', sceneData);
         if ($.isEmptyObject(sceneData)) {
             rsUtils.rslog('No data');
@@ -564,7 +570,7 @@ export class VTKView extends DOMWidgetView {
 
         const name = sceneData.name;
         const id = sceneData.id;
-        let data = sceneData.data;
+        let data = sceneData.data || [];
         for (let i = 0; i < data.length; ++i) {
 
             const sceneDatum = data[i];
@@ -575,7 +581,10 @@ export class VTKView extends DOMWidgetView {
                     return;
                 }
                 const isPoly = t === vtkUtils.GEOM_TYPE_POLYS;
-                const pdti = vtkUtils.objToPolyData(sceneDatum, [t]);
+                const isVector = t === vtkUtils.GEOM_TYPE_VECTS;
+                const pdti = isVector ?
+                    { data: vtkUtils.vectorsToPolyData(sceneDatum) } :
+                    vtkUtils.objToPolyData(sceneDatum, [t]);
                 const pData = pdti.data;
                 let mapper = null;
                 const actor = vtkActor.newInstance();
@@ -584,6 +593,8 @@ export class VTKView extends DOMWidgetView {
                         static: true
                     });
                     mapper.setInputData(pData);
+                    mapper.setScalarModeToUseCellData();
+                    mapper.setColorModeToDirectScalars();
                 }
                 else {
                     let vectorCalc = vtkCalculator.newInstance();
@@ -594,21 +605,25 @@ export class VTKView extends DOMWidgetView {
                     mapper.setInputConnection(vectorCalc.getOutputPort(), 0);
 
                     let s = vtkArrowSource.newInstance();
-                    mapper.setInputConnection(s.getOutputPort(), 1);
+                    mapper.setSourceConnection(s.getOutputPort());
                     mapper.setOrientationArray(ORIENTATION_ARRAY);
+                    mapper.setOrientationModeToDirection();
+                    mapper.setOrient(true);
+                    mapper.setScalarModeToUsePointData();
+                    mapper.setScalarVisibility(true);
 
                     // this scales by a constant - the default is to use scalar data
                     //TODO(mvk): set based on bounds size
                     mapper.setScaleFactor(vectorScaleFactor(sceneData.bounds));
                     mapper.setScaleModeToScaleByConstant();
-                    mapper.setColorModeToDefault();
+                    mapper.setColorModeToDirectScalars();
                 }
                 actor.setMapper(mapper);
                 actor.getProperty().setEdgeVisibility(isPoly);
                 actor.getProperty().setLighting(isPoly);
                 const gname = name + '.' + i;
                 const aname = gname + '.' + t;
-                view.addActor(aname, gname, actor, t, PICKABLE_TYPES.indexOf(t) >= 0);
+                view.addActor(aname, gname, actor, t, PICKABLE_TYPES.indexOf(t) >= 0, pData);
                 view.loadActorState(aname);
             });
         }
@@ -676,7 +691,9 @@ export class VTKView extends DOMWidgetView {
             vu: cam.getViewUp()
         });
         r.resetCamera();
-        this.orientationMarker.updateMarkerOrientation();
+        if (this.orientationMarker) {
+            this.orientationMarker.updateMarkerOrientation();
+        }
         this.fsRenderer.getRenderWindow().render();
     }
 
@@ -812,8 +829,13 @@ export class VTKView extends DOMWidgetView {
             //rsUtils.rslog('vtk setVectorColorMap: No color map');
             return;
         }
+        const sceneData = this.model.get('model_data') || {};
+        const vectors = (((sceneData.data || [])[0] || {}).vectors);
+        if (! vectors) {
+            return;
+        }
         actor.getMapper().getInputConnection(0).filter
-            .setFormula(getVectFormula(this.model.get('model_data').data[0].vectors, mapName));
+            .setFormula(getVectFormula(vectors, mapName));
         this.fsRenderer.getRenderWindow().render();
     }
 

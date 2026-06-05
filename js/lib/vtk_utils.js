@@ -2,6 +2,7 @@
 
 // Load the rendering pieces we want to use (for both WebGL and WebGPU)
 import '@kitware/vtk.js/Rendering/Profiles/Geometry';
+import '@kitware/vtk.js/Rendering/Profiles/Glyph';
 
 import vtkActor from '@kitware/vtk.js/Rendering/Core/Actor';
 import vtkCubeSource from '@kitware/vtk.js/Filters/Sources/CubeSource';
@@ -17,6 +18,11 @@ export const GEOM_TYPE_POLYS = 'polygons';
 export const GEOM_TYPE_VECTS = 'vectors';
 export const GEOM_OBJ_TYPES = [GEOM_TYPE_LINES, GEOM_TYPE_POLYS];
 export const GEOM_TYPES = [GEOM_TYPE_LINES, GEOM_TYPE_POLYS, GEOM_TYPE_VECTS];
+const DEFAULT_COLORS = {
+    [GEOM_TYPE_LINES]: [0.0, 0.0, 0.0],
+    [GEOM_TYPE_POLYS]: [0.0, 0.0, 1.0],
+    [GEOM_TYPE_VECTS]: [0.0, 0.0, 1.0],
+};
 
 function pickPoint(customFn) {
 
@@ -105,13 +111,18 @@ export function objToPolyData(json, includeTypes) {
             return;
         }
 
-        // may not always be colors in the data
+        // may not always be colors in the data. Radia uses negative values as
+        // default-color sentinels, which are not valid direct RGB scalars.
         let c = t.colors || [];
-        for (let i = 0; i < c.length; i++) {
-            colors.push(Math.floor(255 * c[i]));
-            if (i % 3 === 2) {
-                colors.push(255);
-            }
+        for (let i = 0; i < c.length; i += 3) {
+            const rgb = c.slice(i, i + 3);
+            const useDefault = rgb.length < 3 || rgb.some(function (v) {
+                return v < 0 || ! Number.isFinite(v);
+            });
+            (useDefault ? DEFAULT_COLORS[type] : rgb).forEach(function (v) {
+                colors.push(Math.max(0, Math.min(255, Math.floor(255 * v))));
+            });
+            colors.push(255);
         }
 
         let tArr = [];
@@ -147,18 +158,20 @@ export function objToPolyData(json, includeTypes) {
         pd.getPolys().setData(tData.polygons, 1);
     }
 
-    pd.getCellData().setScalars(vtkDataArray.newInstance({
-        numberOfComponents: 4,
-        values: colors,
-        dataType: vtkDataArray.VtkDataTypes.UNSIGNED_CHAR
-    }));
+    if (colors.length) {
+        pd.getCellData().setScalars(vtkDataArray.newInstance({
+            numberOfComponents: 4,
+            values: new window.Uint8Array(colors),
+            dataType: vtkDataArray.VtkDataTypes.UNSIGNED_CHAR
+        }));
+    }
 
     pd.buildCells();
 
     return {data: pd, typeInfo: typeInfo};
 }
 
-function vectorsToPolyData(json) {
+export function vectorsToPolyData(json) {
     let points = new window.Float32Array(json.vectors.vertices);
     let pd = vtkPolyData.newInstance();
     pd.getPoints().setData(points, 3);
