@@ -1,2 +1,5 @@
 # Compiled javascript
 labextension
+nbextension/*
+!nbextension/
+!nbextension/extension.js

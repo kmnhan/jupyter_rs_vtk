@@ -17,7 +17,8 @@
         "build": "jlpm run build:labextension:dev",
         "build:labextension": "jupyter labextension build .",
         "build:labextension:dev": "jupyter labextension build --development True .",
-        "build:prod": "jlpm run build:labextension",
+        "build:nbextension": "webpack --mode=production --config webpack.config.js",
+        "build:prod": "jlpm run build:nbextension && jlpm run build:labextension",
         "clean:all": "jlpm run clean:labextension",
         "clean:labextension": "rimraf jupyter_rs_vtk/labextension",
         "install:extension": "jupyter labextension develop --overwrite .",
@@ -27,7 +28,10 @@
     "devDependencies": {
         "@jupyterlab/builder": "^4.5.1",
         "rimraf": "^6.1.2",
-        "webpack": "^5"
+        "webpack": "5.106.0"
+    },
+    "resolutions": {
+        "webpack": "5.106.0"
     },
     "dependencies": {
         "@jupyter-widgets/base": "^6.0.11",
